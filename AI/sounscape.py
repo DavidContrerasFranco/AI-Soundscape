@@ -12,12 +12,20 @@ sys.path.append("..")
 ## Model specification
 class Soundscape(nn.Module):
 
-    def __init__(self, input_dimension):
+    def __init__(self, input_dimension, n_layers=1, batch_size=1):
         super(Soundscape, self).__init__()
+        hidden_state_Re = torch.randn(n_layers, batch_size, input_dimension)
+        cell_state_Re = torch.randn(n_layers, batch_size, input_dimension)
+        hidden_state_Im = torch.randn(n_layers, batch_size, input_dimension)
+        cell_state_Im = torch.randn(n_layers, batch_size, input_dimension)
+
         self.input_dimension = input_dimension
+        self.hidden_Re = (hidden_state_Re, cell_state_Re)
+        self.hidden_Im = (hidden_state_Re, cell_state_Re)
+
         self.linearHidden = nn.Linear(input_dimension * 2, input_dimension * 2)
-        self.lstm_1 = nn.LSTM(input_dimension * 2, input_dimension)
-        self.lstm_2 = nn.LSTM(input_dimension * 2, input_dimension)
+        self.lstm_1 = nn.LSTM(input_dimension * 2, input_dimension, n_layers)
+        self.lstm_2 = nn.LSTM(input_dimension * 2, input_dimension, n_layers)
         self.outRe = nn.Linear(input_dimension, input_dimension)
         self.outIm = nn.Linear(input_dimension, input_dimension)
 
@@ -28,20 +36,20 @@ class Soundscape(nn.Module):
         x_hidden = self.linearHidden(x_reshaped)
         
         # LSTM input is a 3D Tenso: (the sequence itself, instances in the mini-batch = 1, elements of the input)
-        lstm1_re = self.lstm_1(x_hidden)
-        lstm1_im = self.lstm_2(x_hidden)
+        lstm1_Re, self.hidden_Re = self.lstm_1(x_hidden.view(1, 1, len(x_reshaped)), self.hidden_Re)
+        lstm1_Im, self.hidden_Im = self.lstm_2(x_hidden.view(1, 1, len(x_reshaped)), self.hidden_Im)
 
-        out_re = self.outRe(lstm1_re)
-        out_im = self.outIm(lstm1_im)
+        out_Re = self.outRe(lstm1_Re)
+        out_Im = self.outIm(lstm1_Im)
 
         # Join Real & Imaginary parts
-        out = torch.transpose(torch.reshape(torch.cat((out_re, out_im), 0), (2, self.input_dimension)), 0, 1)
+        out = torch.transpose(torch.reshape(torch.cat((out_Re, out_Im), 0), (2, self.input_dimension)), 0, 1)
 
         return out
 
 def main():
     # Load the dataset
-    mat_contents = loadmat('fsamples.mat')
+    mat_contents = loadmat('../DataProcess/fsamples.mat')
     raw_data = mat_contents['Vec']
     input_dimension = raw_data.shape[0]
     

@@ -50,11 +50,14 @@ def run_epoch(data, model, optimizer):
             out = model(x[:,:,sample])
 
             # Predict and store accuracy
-            accuracies.append(compute_accuracy(out, y[:,:,sample]).item())
+            target = y[:,:,sample]
+            accuracies.append(compute_accuracy(out, target).item())
 
             # Compute loss
-            loss = F.cross_entropy(out, y)
-            losses.append(loss.data.item())
+            # loss = F.cross_entropy(out, y)
+            loss = nn.MSELoss()
+            output = loss(out, target)
+            losses.append(output.data.item())
 
             # If training, do an update.
             if is_training:
