@@ -6,46 +6,53 @@ from trainer import train_model
 import time
 import sys
 from scipy.io import loadmat
+from math import ceil
 sys.path.append("..")
 
 
 ## Model specification
 class Soundscape(nn.Module):
 
-    def __init__(self, input_dimension, n_layers=1, batch_size=1):
+    def __init__(self, input_dimension, seq_len=60, n_layers=1, batch_size=1, input_size_reducer=1):
         super(Soundscape, self).__init__()
-        hidden_state_Re = torch.randn(n_layers, batch_size, input_dimension)
-        cell_state_Re = torch.randn(n_layers, batch_size, input_dimension)
-        hidden_state_Im = torch.randn(n_layers, batch_size, input_dimension)
-        cell_state_Im = torch.randn(n_layers, batch_size, input_dimension)
 
+        # General parameters
         self.input_dimension = input_dimension
-        self.hidden_Re = (hidden_state_Re, cell_state_Re)
-        self.hidden_Im = (hidden_state_Re, cell_state_Re)
+        self.hidden_dim = ceil(input_dimension * input_size_reducer)
+        self.n_layers = n_layers
 
-        self.linearHidden = nn.Linear(input_dimension * 2, input_dimension * 2)
-        self.lstm_1 = nn.LSTM(input_dimension * 2, input_dimension, n_layers)
-        self.lstm_2 = nn.LSTM(input_dimension * 2, input_dimension, n_layers)
-        self.outRe = nn.Linear(input_dimension, input_dimension)
-        self.outIm = nn.Linear(input_dimension, input_dimension)
+        self.linearHidden = nn.Linear(input_dimension * 2, self.hidden_dim)
+        self.lstm_Re = nn.LSTM(self.hidden_dim, self.hidden_dim, n_layers)
+        self.lstm_Im = nn.LSTM(self.hidden_dim, self.hidden_dim, n_layers)
+        self.out = nn.Linear(self.hidden_dim * 2, input_dimension*2)
 
-    def forward(self, x):
+    def forward(self, x, hidden_Re, hidden_Im):
         # Split Real & Imaginary parts
-        x_reshaped = torch.reshape(torch.transpose(x, 0, 1), (1, self.input_dimension*2)).squeeze()
+        x_reshaped = torch.reshape(torch.transpose(x, 0, 1), (1, 60, self.input_dimension*2))
 
         x_hidden = self.linearHidden(x_reshaped)
         
-        # LSTM input is a 3D Tenso: (the sequence itself, instances in the mini-batch = 1, elements of the input)
-        lstm1_Re, self.hidden_Re = self.lstm_1(x_hidden.view(1, 1, len(x_reshaped)), self.hidden_Re)
-        lstm1_Im, self.hidden_Im = self.lstm_2(x_hidden.view(1, 1, len(x_reshaped)), self.hidden_Im)
+        lstm_Re, hidden_Re = self.lstm_Re(x_hidden, hidden_Re)
+        lstm_Im, hidden_Re = self.lstm_Im(x_hidden, hidden_Im)
 
-        out_Re = self.outRe(lstm1_Re)
-        out_Im = self.outIm(lstm1_Im)
+        out = self.out(torch.cat((lstm_Re, lstm_Im), dim=2))
 
-        # Join Real & Imaginary parts
-        out = torch.transpose(torch.reshape(torch.cat((out_Re, out_Im), 0), (2, self.input_dimension)), 0, 1)
+        # Resahpe to match input
+        out = torch.reshape(out, (self.input_dimension, 2, 60))
 
-        return out
+        return out, hidden_Re, hidden_Im
+
+    def init_hidden(self, seq_len=60, batch_size=1):
+        hidden_state_Re = torch.randn(batch_size, seq_len, self.hidden_dim).to(device)
+        cell_state_Re = torch.randn(batch_size, seq_len, self.hidden_dim).to(device)
+        hidden_state_Im = torch.randn(batch_size, seq_len, self.hidden_dim).to(device)
+        cell_state_Im = torch.randn(batch_size, seq_len, self.hidden_dim).to(device)
+
+        hidden_Re = (hidden_state_Re, cell_state_Re)
+        hidden_Im = (hidden_state_Im, cell_state_Im)
+
+        return hidden_Re, hidden_Im
+
 
 def main():
     # Load the dataset
@@ -55,7 +62,7 @@ def main():
     
     # Batchify Data
     batch_size = 60
-    batched_Data = batchify_data(raw_data, batch_size)
+    batched_Data = batchify_data(raw_data, batch_size, device)
 
     # Split into train and dev
     dev_split_index = int(9 * np.array(batched_Data).shape[0] / 10)
@@ -63,20 +70,17 @@ def main():
     train_batches = batched_Data[:dev_split_index]
     
     # Load model
-    model = Soundscape(input_dimension)
+    model = Soundscape(input_dimension, input_size_reducer=0.3)
 
-    ### For GPU Use ###
-    model.cuda()
-
-    train_model(train_batches, dev_batches, model)
-
-    # ## Evaluate the model on test data
-    # loss, accuracy = run_epoch(test_batches, model.eval(), None)
-
-    # print ("Loss on test set:"  + str(loss) + " Accuracy on test set: " + str(accuracy))
+    ### For GPU Use: If Enabled###
+    model.to(device)
+    
+    train_model(train_batches, dev_batches, model, device)
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
+
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         dev = "cuda:0"
