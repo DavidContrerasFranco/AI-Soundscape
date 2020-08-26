@@ -35,15 +35,19 @@ def train_model(train_data, dev_data, model, device, lr=0.001,
         torch.save(model, 'ai_soundscape.pt')
     return val_acc
 
-def run_epoch(data, model, optimizer, device):
+def run_epoch(data, model, optimizer, device, seq_len=60):
     ''' One model pass of data. Returns loss & Accuracy '''
     losses = []
     accuracies = []
     loss_function = nn.MSELoss()
-    hidden_Re, hidden_Im = model.init_hidden()
 
     # Use optimizer when training
     is_training = model.training
+
+    if is_training:
+        hidden_Re, hidden_Im = model.init_hidden_noise(seq_len=seq_len, device=device)
+    else:
+        hidden_Re, hidden_Im = model.init_hidden_silence(seq_len=seq_len, device=device)
 
     # Iterate through batches
     for batch in tqdm(data):
@@ -54,7 +58,7 @@ def run_epoch(data, model, optimizer, device):
         x, target = batch['x'], batch['y']
 
         # Get output predictions
-        out, hidden_Re, hidden_Im = model(x, hidden_Re, hidden_Im)
+        out, hidden_Re, hidden_Im = model(x, hidden_Re, hidden_Im, seq_len=seq_len)
 
         # Predict and store accuracy
         accuracies.append(compute_accuracy(out, target, device).item())
@@ -76,3 +80,23 @@ def run_epoch(data, model, optimizer, device):
     avg_loss = np.mean(losses)
     avg_accuracy = np.mean(accuracies)
     return avg_loss, avg_accuracy
+
+def use_model(init_data, model, hidden_Re, hidden_Im, duration, seq_len=60):
+    ''' One model pass of data. Returns data generated '''
+
+    # Raw data
+    current_data = init_data
+    final_raw_data = np.zeros((init_data.shape[0], init_data.shape[1], seq_len*duration))
+
+    # Iterate through batches
+    for batch in tqdm(range(duration)):
+        # Detach the hidden state
+        hidden_Re, hidden_Im = repackage_hidden(hidden_Re), repackage_hidden(hidden_Im)
+
+        # Get output predictions
+        current_data, hidden_Re, hidden_Im = model(current_data, hidden_Re, hidden_Im, seq_len=seq_len)
+
+        # Store current data
+        final_raw_data[:,:, batch:batch + seq_len] = current_data.cpu().detach().numpy()
+
+    return final_raw_data
